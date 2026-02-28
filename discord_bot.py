@@ -1,8 +1,8 @@
 import discord
 import scanner_api
-import aiohttp  # ย้ายขึ้นมาจัดระเบียบไว้ด้านบนครับ
+import aiohttp
 
-# 🚨 ใส่ Token และ API Key ตรงนี้ (ผมใส่เครื่องหมาย ' ปิดหัวท้ายให้แล้วครับ)
+# 🚨 ใส่ Token และ API Key ตรงนี้
 TOKEN = 'DISCORD_TOKEN'
 VT_API_KEY = 'VIRUSTOTAL_API_KEY'
 
@@ -20,7 +20,7 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    # ฟังก์ชันสร้างการ์ด (Embed) สวยๆ
+    # ฟังก์ชันสร้างการ์ด
     def create_embed(title, result, detail_name, detail_value, extra_fields=None):
         if "✅" in result:
             color = discord.Color.green()
@@ -93,7 +93,7 @@ async def on_message(message):
         )
         await status_msg.edit(content="", embed=embed)
 
-    # 5. สแกนไฟล์ทั่วไป (แค่ลากไฟล์มาใส่เฉยๆ)
+    # 5. สแกนไฟล์ทั่วไป
     elif message.attachments and not message.content.startswith('!verify'):
         for attachment in message.attachments:
             status_msg = await message.reply(f'🔍 Checking file...: {attachment.filename} ...')
