@@ -5,7 +5,6 @@ This is a bot developed in Python for the LINE and Discord platforms. It scans f
 
 - **URL Scanning**: Checks links for phishing and malicious content before users click them.  
 - **File Hash Analysis**: Scans uploaded files or user-provided SHA-256 hashes against the VirusTotal database.   
-- **Real-time Responses**: Fast asynchronous processing.  
 - **Multi-Platform Support**: Works on both Discord and LINE messaging platforms.  
 
 ## Supported Platforms
@@ -13,8 +12,11 @@ This is a bot developed in Python for the LINE and Discord platforms. It scans f
 - Discord Bot  
 - LINE Bot  
 
-## Limitations in Discord.
+## Limitations in Discord
 If any file is malicious, Discord will immediately block the upload, making it impossible to test the bot.
 
-## Disadvantages in line
+## Limitations in LINE
+There is no feature to check if the hash value of an attached file matches the entered hash value.
+
+## Disadvantages in LINE
 If any files are large, it may take a little longer to scan.
