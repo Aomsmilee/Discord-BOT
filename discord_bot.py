@@ -1,13 +1,10 @@
 import discord
+import re
 import scanner_api
-import zipfile
-import io
 import os
 from dotenv import load_dotenv
 
-# ==========================================
-# 1. ตั้งค่าพื้นฐานและโหลดกุญแจความลับ
-# ==========================================
+# ตั้งค่าพื้นฐานและโหลดกุญแจความลับ
 load_dotenv()
 
 # Discord Token และ VirusTotal API Key
@@ -15,38 +12,31 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 VT_API_KEY = os.getenv("VT_API_KEY")
 
 # ==========================================
-# 2. ระบบวิเคราะห์และสร้างข้อความรายงาน
+# 1. วิเคราะห์และสร้างข้อความรายงาน
 # ==========================================
 def get_threat_advice(threat_text):
-    """วิเคราะห์คำศัพท์จากผลสแกน เพื่อแยกประเภทภัยคุกคาม"""
+    """วิเคราะห์ผลสแกน เพื่อให้คำแนะนำแบบเป็นกลาง (VirusTotal Style)"""
     text = str(threat_text).lower()
     
-    if "phishing" in text or "malicious" in text:
-        return {"exp": "**Phishing / Malicious:** หน้าเว็บปลอมหรือไฟล์หลอกขโมยข้อมูล", "rec": "**Action:** ห้ามคลิกหรือเปิด ให้ลบทิ้งทันที"}
-    elif "ransomware" in text or "wannacry" in text:
-        return {"exp": "**Ransomware:** มัลแวร์เข้ารหัสข้อมูลเพื่อเรียกค่าไถ่", "rec": "**Action:** ห้ามรันเป้าหมายนี้เด็ดขาด! ลบทิ้งทันที"}
-    elif "trojan" in text or "spyware" in text or "stealer" in text:
-        return {"exp": "**Trojan/Spyware:** แอบขโมยข้อมูลหรือเปิดหลังบ้านให้แฮกเกอร์", "rec": "**Action:** ลบทิ้งทันที และทำการ Full Scan เครื่อง"}
-    elif "hacktool" in text or "riskware" in text or "psexec" in text:
-        return {"exp": "**Riskware / HackTool:** โปรแกรมเจาะระบบที่อาจเป็นอันตราย", "rec": "**Action:** หากไม่ได้ติดตั้งเองให้ลบทิ้ง"}
-    elif "eicar" in text:
-        return {"exp": "**Test File:** ไฟล์จำลองเพื่อใช้ทดสอบ ปลอดภัย 100%", "rec": "**Action:** ไม่ต้องดำเนินการใดๆ"}
-    elif "password-protected" in text or "เข้ารหัสผ่าน" in text:
-        return {"exp": "**Encrypted Archive:** ถูกล็อครหัสผ่าน ระบบสแกนไส้ในไม่ได้", "rec": "**Action:** ระมัดระวัง! ห้ามแตกไฟล์เด็ดขาด"}
-    elif "❌" in text:
-        return {"exp": "**Unknown Malware:** พบพฤติกรรมต้องสงสัย", "rec": "**Action:** หลีกเลี่ยงการเปิดใช้งาน"}
+    # 1. กรณีพบการแจ้งเตือนตั้งแต่ 1 เอนจินขึ้นไป (จับจาก ⚠️)
+    if "⚠️" in text:
+        return {
+            "exp": "Detection Alert: มีเอนจินสแกนไวรัสบางค่ายมองว่าน่าสงสัย", 
+            "rec": "Action: หากจำนวนเอนจินที่พบน้อย อาจเป็น False Positive แต่หากพบจำนวนมาก ควรลบทิ้งทันที"
+        }
     
+    # กรณี 0 เอนจิน (✅) ให้ปล่อยผ่าน ไม่ต้องอธิบายเพิ่ม
     return None
 
 # ==========================================
-# 3. ตั้งค่าบอท Discord
+# 2. ตั้งค่าบอท Discord
 # ==========================================
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
 # ==========================================
-# 4. เหตุการณ์ (Events)
+# 3. เหตุการณ์ (Events)
 # ==========================================
 @client.event
 async def on_ready():
@@ -58,7 +48,7 @@ async def on_message(message):
         return
 
     # --- ฟังก์ชันผู้ช่วย: สร้างการ์ด UI (Embed) ---
-    def create_embed(title, result, detail_name, detail_value, extra_fields=None):
+    def create_embed(title, result, detail_name, detail_value, extra_fields=None, report_url=None):
         if "✅" in result:
             color = discord.Color.green()
         elif "❌" in result or "⚠️" in result:
@@ -73,6 +63,9 @@ async def on_message(message):
         if extra_fields:
             for name, value in extra_fields.items():
                 embed.add_field(name=name, value=value, inline=False)
+        
+        if report_url:
+            embed.add_field(name="🌐 Full Report (VirusTotal)", value=f"[คลิกเพื่อดูรายละเอียด]({report_url})", inline=False)
 
         advice = get_threat_advice(result)
         if advice:
@@ -83,38 +76,50 @@ async def on_message(message):
         embed.set_footer(text="VirusTotal Scanner")
         return embed
 
-    # 1. ทดสอบสถานะบอท
+    ## Auto-Scanning ##
+    # 1. ดักจับไฟล์แนบอัตโนมัติ (ข้ามถ้ากำลังใช้คำสั่ง !verify)
+    if message.attachments and not message.content.startswith('!verify'):
+        for attachment in message.attachments:
+            status_msg = await message.reply(f'🔍 กำลังสแกนไฟล์: `{attachment.filename}` ...')
+            file_bytes = await attachment.read()
+            
+            file_hash = scanner_api.calculate_hash(file_bytes)
+            result = scanner_api.check_virustotal_file(file_hash, VT_API_KEY)
+
+            # สร้างลิงก์ Report และส่งเข้าไปในฟังก์ชัน
+            vt_report_url = scanner_api.get_vt_file_report_url(file_hash)
+
+            embed = create_embed(
+                "File Scan Report", result, "File name", attachment.filename,
+                extra_fields={"SHA-256 Hash": f"`{file_hash}`"}, report_url=vt_report_url
+            )
+            await status_msg.edit(content="", embed=embed)
+
+    # 2. ดักจับลิงก์อัตโนมัติ (ใช้ Regex ดึง URL ออกมาจากข้อความ)
+    url_pattern = r'((?:https?://)?(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*))'
+    urls = re.findall(url_pattern, message.content)
+
+    if urls:
+        for url in urls:
+            scan_url = url
+            if not scan_url.startswith(('http://', 'https://')):
+                scan_url = 'http://' + scan_url
+
+            status_msg = await message.reply(f'🔍 กำลังสแกนลิงก์: `{url}` ...')
+            result = scanner_api.check_virustotal_url(scan_url, VT_API_KEY)
+
+            # สร้างลิงก์ Report และส่งเข้าไปในฟังก์ชัน
+            vt_report_url = scanner_api.get_vt_url_report_url(scan_url)
+
+            embed = create_embed("URL Scan Report", result, "URL", url, report_url=vt_report_url)
+            await status_msg.edit(content="", embed=embed)
+    
+    ## Manual Commands ##
+    # ทดสอบสถานะบอท
     if message.content == 'Hello':
         await message.reply('Hi! Bot ready to scan!')
 
-    # 2. ตรวจสอบลิงก์ (!link ...)
-    if message.content.startswith('!link '):
-        url_to_check = message.content.split(' ')[1]
-        status_msg = await message.reply(f'Checking the link...: {url_to_check} ...')
-        
-        # เรียกใช้ check_virustotal_url
-        result = scanner_api.check_virustotal_url(url_to_check, VT_API_KEY)
-
-        embed = create_embed("Link Scanning Results", result, "URL", url_to_check)
-        await status_msg.edit(content="", embed=embed)
-
-    # 3. ตรวจสอบด้วย Hash (!check ...)
-    if message.content.startswith('!check '):
-        hash_to_check = message.content.split(' ')[1]
-        status_msg = await message.reply('Checking hash...')
-        
-        # เรียกใช้ check_virustotal_file
-        result = scanner_api.check_virustotal_file(hash_to_check, VT_API_KEY)
-        
-        embed = create_embed(
-            "Hash Scanning Results", 
-            result, 
-            "Hash", 
-            hash_to_check
-        )
-        await status_msg.edit(content="", embed=embed)
-
-    # 4. ตรวจสอบความสมบูรณ์ของไฟล์ (!verify ...)
+    # ตรวจสอบความสมบูรณ์ของไฟล์ (!verify ...)
     if message.content.startswith('!verify ') and message.attachments:
         original_hash = message.content.split(' ')[1]
         attachment = message.attachments[0]
@@ -126,9 +131,9 @@ async def on_message(message):
         match, file_hash = scanner_api.verify_hash(file_bytes, original_hash)
 
         if match:
-            result = "✅ Hash matched! The file has not been modified"
+            result = "✅ แฮชตรงกัน! ไฟล์ไม่ได้ถูกเปลี่ยนแปลง"
         else:
-            result = "❌ Hash mismatch! File modified or corrupted"
+            result = "❌ แฮชไม่ตรงกัน! ไฟล์ถูกเปลี่ยนแปลงหรืออาจเสียหาย"
 
         embed = create_embed(
             "Source Hash Integrity Report",
@@ -141,42 +146,7 @@ async def on_message(message):
         )
         await status_msg.edit(content="", embed=embed)
 
-    # 5. สแกนไฟล์ทั่วไปแบบออโต้
-    elif message.attachments and not message.content.startswith('!verify'):
-        for attachment in message.attachments:
-            status_msg = await message.reply(f'Checking file...: {attachment.filename} ...')
-            
-            file_bytes = await attachment.read()
-
-            if attachment.filename.lower().endswith('.zip'):
-                try:
-                    with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
-                        is_encrypted = any(info.flag_bits & 0x1 for info in zf.infolist())
-                        if is_encrypted:
-                            alert_msg = "❌ **Warning!** ไฟล์ถูกเข้ารหัสผ่าน (Password-Protected)"
-                            embed = create_embed("⚠️ Security Alert", alert_msg, "File name", attachment.filename)
-                            await status_msg.edit(content="", embed=embed)
-                            continue
-                except zipfile.BadZipFile:
-                    pass
-            
-            # เรียกใช้ calculate_hash
-            file_hash = scanner_api.calculate_hash(file_bytes)
-            
-            # เรียกใช้ check_virustotal_file
-            result = scanner_api.check_virustotal_file(file_hash, VT_API_KEY)
-
-            embed = create_embed(
-                "File Scan Report",
-                result,
-                "File name", attachment.filename,
-                extra_fields={
-                    "SHA-256 Hash": f"`{file_hash}`"
-                }
-            )
-            await status_msg.edit(content="", embed=embed)
-
 # ==========================================
-# 5. สั่งรันบอท
+# 4. สั่งรันบอท
 # ==========================================
 client.run(TOKEN)
